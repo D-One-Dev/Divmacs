@@ -9,6 +9,17 @@
 
 (tool-bar-mode -1)
 
+(setq-default cursor-type 'bar);; =========================================================
+;; Emacs configuration
+;; Linux / GUI-first / mouse-friendly setup
+;; =========================================================
+
+;; ---------------------------------------------------------
+;; Basic GUI / editing behavior
+;; ---------------------------------------------------------
+
+(tool-bar-mode -1)
+
 (setq-default cursor-type 'bar)
 
 (global-hl-line-mode 1)
@@ -46,7 +57,9 @@
 
 (when (eq system-type 'gnu/linux)
   ;;linux
-  (setq x-super-keysym 'super))
+  ;;(setq x-super-keysym 'super))
+  (setq x-super-keysym 'meta)
+  (setq x-meta-keysym 'super))
 
 ;; ---------------------------------------------------------
 ;; Familiar editing shortcuts
@@ -293,10 +306,7 @@ mc/cmds-to-run-for-all)))
      default))
  '(minimap-dedicated-window nil)
  '(minimap-mode t)
- '(package-selected-packages
-   '(consult corfu demap doom-themes drag-stuff exec-path-from-shell
-	     marginalia multiple-cursors nerd-icons orderless treemacs
-	     vertico)))
+ '(package-selected-packages nil))
 
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
@@ -373,6 +383,70 @@ mc/cmds-to-run-for-all)))
           (set-window-buffer win (other-buffer buf)))))))
 
 (global-set-key (kbd "s-\\") #'my-snap-buffer)
+
+;; ---------------------------------------------------------
+;; Correct trackpad horizontal scroll direction
+;; (swap wheel-left/right vs mwheel default)
+;; ---------------------------------------------------------
+
+(defun my-trackpad-hscroll (event left)
+  (let* ((win (posn-window (event-start event))))
+    (when (window-minibuffer-p win)
+      (setq win (minibuffer-selected-window)))
+    (with-selected-window (if (window-live-p win) win (selected-window))
+      (funcall (if left 'scroll-right 'scroll-left)
+               mouse-wheel-scroll-amount-horizontal))))
+
+(defun my-wheel-left (event)
+  (interactive "e")
+  (my-trackpad-hscroll event t))
+
+(defun my-wheel-right (event)
+  (interactive "e")
+  (my-trackpad-hscroll event nil))
+
+(define-key global-map [wheel-left] #'my-wheel-left)
+(define-key global-map [wheel-right] #'my-wheel-right)
+
+
+(global-hl-line-mode 1)
+(global-display-line-numbers-mode 1)
+(blink-cursor-mode 0)
+
+(setq scroll-conservatively 101
+  scroll-margin 3
+  mouse-wheel-scroll-amount '(3 ((shift) . hscroll))
+  mouse-wheel-progressive-speed nil)
+
+(setq mouse-wheel-tilt-scroll t)
+
+(setq-default truncate-lines t)
+
+(setq mouse-wheel-scroll-amount-horizontal 4)
+
+(delete-selection-mode 1)
+
+(setq case-fold-search t)
+
+(global-auto-revert-mode 1)
+
+(column-number-mode 1)
+
+;; ---------------------------------------------------------
+;; configuring keybinds depending on current OS
+;; ---------------------------------------------------------
+
+(when (eq system-type 'darwin)
+  ;;macOS
+  (setq mac-command-modifier 'super
+      mac-option-modifier 'meta)
+  )
+
+(when (eq system-type 'gnu/linux)
+  ;;linux
+  ;;(setq x-super-keysym 'super))
+  (setq x-super-keysym 'meta)
+  (setq x-meta-keysym 'super))
 
 ;; ---------------------------------------------------------
 ;; Correct trackpad horizontal scroll direction
