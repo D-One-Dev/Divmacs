@@ -7,6 +7,8 @@
 ;; Basic GUI / editing behavior
 ;; ---------------------------------------------------------
 
+(tool-bar-mode -1)
+
 (setq-default cursor-type 'bar)
 
 (global-hl-line-mode 1)
@@ -25,19 +27,25 @@ mouse-wheel-progressive-speed nil)
 (set-language-environment "UTF-8")
 (prefer-coding-system 'utf-8)
 
+(setq global-auto-revert-mode 1)
+
+
 ;; ---------------------------------------------------------
-;; macOS keyboard behavior
+;; configuring keybinds depending on current OS
 ;; ---------------------------------------------------------
 
-;; Command = Super
-;; Option  = Meta
-
-(setq mac-command-modifier 'super
+(when (eq system-type 'darwin)
+  ;;macOS
+  (setq mac-command-modifier 'super
       mac-option-modifier 'meta)
+  )
 
+(when (eq system-type 'gnu/linux)
+  ;;linux
+  (setq x-super-keysym 'super))
 
 ;; ---------------------------------------------------------
-;; Familiar macOS editing shortcuts
+;; Familiar editing shortcuts
 ;; ---------------------------------------------------------
 
 (global-set-key (kbd "s-c") #'kill-ring-save)
@@ -79,13 +87,17 @@ mouse-wheel-progressive-speed nil)
 ;; ---------------------------------------------------------
 ;; File/project sidebar
 ;; ---------------------------------------------------------
+
 (use-package treemacs
-:ensure t
-:bind
-("C-t" . treemacs)
-:config
-(setq treemacs-width 60
-treemacs-is-never-other-window t))
+  :ensure t
+  :bind
+  ("C-t" . treemacs)
+  :config
+  (setq treemacs-is-never-other-window t
+      treemacs-width-is-initially-locked nil
+      treemacs-width 35
+      treemacs-position 'left
+      ))
 
 ;; ---------------------------------------------------------
 ;; Project support
@@ -96,16 +108,6 @@ treemacs-is-never-other-window t))
 ;; ---------------------------------------------------------
 ;; Appearance
 ;; ---------------------------------------------------------
-
-;; (load-theme 'wombat t)
-
-;; Linux-friendly monospace font.
-;;
-;; JetBrains Mono is commonly available and is a good choice
-;; for C#/Unity development.
-;;
-;; If you don't have it, replace this with a font you have
-;; installed, e.g. "DejaVu Sans Mono" or "Iosevka".
 
 (use-package doom-themes
   :ensure t
@@ -130,12 +132,6 @@ treemacs-is-never-other-window t))
 (set-face-attribute 'default nil
 :family "MartianMono Nerd Font"
 :height 140)
-
-;; (set-face-attribute 'cursor nil
-;; :background "white")
-;;
-;; (set-face-attribute 'hl-line nil
-;; :background "#2a2a2a")
 
 ;; ---------------------------------------------------------
 ;; File tabs
@@ -259,7 +255,7 @@ mc/cmds-to-run-for-all)))
 :ensure t
 :custom
 (corfu-auto t)
-(corfu-auto-delay 0.2)
+(corfu-auto-delay 0)
 (corfu-auto-prefix 1)
 :init
 (global-corfu-mode))
@@ -269,32 +265,6 @@ mc/cmds-to-run-for-all)))
 ;; ---------------------------------------------------------
 
 (electric-pair-mode 1)
-
-;; ---------------------------------------------------------
-;; C# Allman braces
-;; ---------------------------------------------------------
-
-(defun my-csharp-allman-braces ()
-"Configure C# opening braces in Allman style."
-
-;; Make a fresh local copy rather than modifying the global
-;; c-hanging-braces-alist.
-(setq-local
-c-hanging-braces-alist
-(copy-tree c-hanging-braces-alist))
-
-;; Remove the existing substatement rule.
-(setq-local
-c-hanging-braces-alist
-(assq-delete-all
-'substatement-open
-c-hanging-braces-alist))
-
-;; Opening braces go on their own line.
-(push '(substatement-open before after)
-c-hanging-braces-alist))
-
-(add-hook 'csharp-mode-hook #'my-csharp-allman-braces)
 
 ;; ---------------------------------------------------------
 ;; Custom variables
@@ -310,8 +280,8 @@ c-hanging-braces-alist))
    '("c9d837f562685309358d8dc7fccb371ed507c0ae19cf3c9ae67875db0c038632"
      default))
  '(package-selected-packages
-   '(consult corfu doom-themes marginalia multiple-cursors nerd-icons
-	     orderless treemacs vertico)))
+   '(consult corfu doom-themes exec-path-from-shell marginalia
+	     multiple-cursors nerd-icons orderless treemacs vertico)))
 
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
@@ -323,5 +293,29 @@ c-hanging-braces-alist))
 ;; ---------------------------------------------------------
 ;; Git
 ;; ---------------------------------------------------------
+
 (use-package magit
 :ensure t)
+
+;; ---------------------------------------------------------
+;; Nerd Icons
+;; ---------------------------------------------------------
+
+(use-package nerd-icons
+:ensure t)
+
+;; ---------------------------------------------------------
+;; Commenting lines with M-/
+;; ---------------------------------------------------------
+
+(global-set-key (kbd "s-/") #'comment-line)
+
+;; ---------------------------------------------------------
+;; Loading PATH config from shell on launch
+;; ---------------------------------------------------------
+
+(use-package exec-path-from-shell
+  :ensure t
+  :config
+  (when (memq window-system '(mac ns x))
+    (exec-path-from-shell-initialize)))
