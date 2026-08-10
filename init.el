@@ -16,19 +16,23 @@
 (blink-cursor-mode 0)
 
 (setq scroll-conservatively 101
-scroll-margin 3
-mouse-wheel-scroll-amount '(3 ((shift) . 1))
-mouse-wheel-progressive-speed nil)
+  scroll-margin 3
+  mouse-wheel-scroll-amount '(3 ((shift) . hscroll))
+  mouse-wheel-progressive-speed nil)
+
+(setq mouse-wheel-tilt-scroll t)
+
+(setq-default truncate-lines t)
+
+(setq mouse-wheel-scroll-amount-horizontal 4)
 
 (delete-selection-mode 1)
 
 (setq case-fold-search t)
 
-(set-language-environment "UTF-8")
-(prefer-coding-system 'utf-8)
+(global-auto-revert-mode 1)
 
-(setq global-auto-revert-mode 1)
-
+(column-number-mode 1)
 
 ;; ---------------------------------------------------------
 ;; configuring keybinds depending on current OS
@@ -53,7 +57,8 @@ mouse-wheel-progressive-speed nil)
 (global-set-key (kbd "s-x") #'kill-region)
 (global-set-key (kbd "s-a") #'mark-whole-buffer)
 (global-set-key (kbd "s-f") #'isearch-forward)
-(global-set-key (kbd "s-r") #'replace-string)
+(global-set-key (kbd "s-r") #'query-replace)
+;; (global-set-key (kbd "s-r") #'replace-string)
 
 ;; ---------------------------------------------------------
 ;; Mouse behavior
@@ -116,14 +121,14 @@ mouse-wheel-progressive-speed nil)
   (doom-themes-enable-bold t)   ; if nil, bold is universally disabled
   (doom-themes-enable-italic t) ; if nil, italics is universally disabled
   ;; for treemacs users
-  (doom-themes-treemacs-theme "doom-atom") ; use "doom-colors" for less minimal icon theme
-  :config
-  (load-theme 'doom-one t)
+  ;; (doom-themes-treemacs-theme "doom-atom") ; use "doom-colors" for less minimal icon theme
+  ;; :config
+  ;; (load-theme 'doom-one t)
 
   ;; Enable flashing mode-line on errors
 ;;   (doom-themes-visual-bell-config)
   ;; Enable custom neotree theme (nerd-icons must be installed!)
-  (doom-themes-neotree-config)
+  ;; (doom-themes-neotree-config)
   ;; or for treemacs users
   (doom-themes-treemacs-config)
   ;; Corrects (and improves) org-mode's native fontification.
@@ -242,8 +247,13 @@ mc/cmds-to-run-for-all)))
 (require 'eglot)
 
 (add-to-list
-'eglot-server-programs
-'(csharp-mode . ("csharp-ls")))
+ 'eglot-server-programs
+ '(csharp-mode . ("csharp-ls")))
+
+(use-package eglot
+  :ensure nil
+  :bind (:map eglot-mode-map)
+  ("M-r" . eglot-rename))
 
 (add-hook 'csharp-mode-hook #'eglot-ensure)
 
@@ -255,7 +265,7 @@ mc/cmds-to-run-for-all)))
 :ensure t
 :custom
 (corfu-auto t)
-(corfu-auto-delay 0)
+(corfu-auto-delay 0.1)
 (corfu-auto-prefix 1)
 :init
 (global-corfu-mode))
@@ -265,6 +275,7 @@ mc/cmds-to-run-for-all)))
 ;; ---------------------------------------------------------
 
 (electric-pair-mode 1)
+(add-hook 'csharp-mode-hook (lambda () (setq c-basic-offset 4)))
 
 ;; ---------------------------------------------------------
 ;; Custom variables
@@ -280,7 +291,7 @@ mc/cmds-to-run-for-all)))
    '("c9d837f562685309358d8dc7fccb371ed507c0ae19cf3c9ae67875db0c038632"
      default))
  '(package-selected-packages
-   '(consult corfu doom-themes exec-path-from-shell marginalia
+   '(consult corfu doom-themes drag-stuff exec-path-from-shell marginalia
 	     multiple-cursors nerd-icons orderless treemacs vertico)))
 
 (custom-set-faces
@@ -295,7 +306,8 @@ mc/cmds-to-run-for-all)))
 ;; ---------------------------------------------------------
 
 (use-package magit
-:ensure t)
+  :ensure t
+  :bind ("C-x g" . magit-status))
 
 ;; ---------------------------------------------------------
 ;; Nerd Icons
@@ -311,11 +323,73 @@ mc/cmds-to-run-for-all)))
 (global-set-key (kbd "s-/") #'comment-line)
 
 ;; ---------------------------------------------------------
+;; Reload config (evaluate-buffer) with M-S-r
+;; ---------------------------------------------------------
+
+(global-set-key (kbd "M-R") #'eval-buffer)
+
+;; ---------------------------------------------------------
 ;; Loading PATH config from shell on launch
 ;; ---------------------------------------------------------
 
 (use-package exec-path-from-shell
   :ensure t
   :config
-  (when (memq window-system '(mac ns x))
-    (exec-path-from-shell-initialize)))
+  (when (memq window-system '(mac ns x))))
+
+;; ---------------------------------------------------------
+;; Moving lines/regions up/down with s-<up>/s-<down>
+;; ---------------------------------------------------------
+
+(use-package drag-stuff
+  :ensure t
+  :bind (("s-<up>" . drag-stuff-up)
+	 ("s-<down>" . drag-stuff-down)))
+
+;; ---------------------------------------------------------
+;; Buffer snapping (s-\ toggle)
+;; ---------------------------------------------------------
+
+(defvar my-snapped-window nil
+  "Window created by `my-snap-buffer', if any.")
+
+(defun my-snap-buffer ()
+  (interactive)
+  (if (and my-snapped-window (window-live-p my-snapped-window))
+      (let ((buf (window-buffer my-snapped-window)))
+        (delete-window my-snapped-window)
+        (set-window-buffer (selected-window) buf)
+        (setq my-snapped-window nil))
+    (let* ((buf (current-buffer))
+           (win (selected-window)))
+      (setq my-snapped-window (split-window-right))
+      (set-window-buffer my-snapped-window buf)
+      (let ((prev (switch-to-prev-buffer win)))
+        (unless (and prev (not (eq prev buf)))
+          (set-window-buffer win (other-buffer buf)))))))
+
+(global-set-key (kbd "s-\\") #'my-snap-buffer)
+
+;; ---------------------------------------------------------
+;; Correct trackpad horizontal scroll direction
+;; (swap wheel-left/right vs mwheel default)
+;; ---------------------------------------------------------
+
+(defun my-trackpad-hscroll (event left)
+  (let* ((win (posn-window (event-start event))))
+    (when (window-minibuffer-p win)
+      (setq win (minibuffer-selected-window)))
+    (with-selected-window (if (window-live-p win) win (selected-window))
+      (funcall (if left 'scroll-right 'scroll-left)
+               mouse-wheel-scroll-amount-horizontal))))
+
+(defun my-wheel-left (event)
+  (interactive "e")
+  (my-trackpad-hscroll event t))
+
+(defun my-wheel-right (event)
+  (interactive "e")
+  (my-trackpad-hscroll event nil))
+
+(define-key global-map [wheel-left] #'my-wheel-left)
+(define-key global-map [wheel-right] #'my-wheel-right)
