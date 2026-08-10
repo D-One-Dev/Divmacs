@@ -149,8 +149,9 @@ tab-line-new-button-show t
 tab-line-separator " ")
 
 (setq tab-line-exclude-modes
-'(treemacs-mode
-special-mode))
+  '(treemacs-mode
+    special-mode))
+    ;; fundamental-mode))
 
 ;; ---------------------------------------------------------
 ;; Window layout history
@@ -290,9 +291,12 @@ mc/cmds-to-run-for-all)))
  '(custom-safe-themes
    '("c9d837f562685309358d8dc7fccb371ed507c0ae19cf3c9ae67875db0c038632"
      default))
+ '(minimap-dedicated-window nil)
+ '(minimap-mode t)
  '(package-selected-packages
-   '(consult corfu doom-themes drag-stuff exec-path-from-shell marginalia
-	     multiple-cursors nerd-icons orderless treemacs vertico)))
+   '(consult corfu demap doom-themes drag-stuff exec-path-from-shell
+	     marginalia multiple-cursors nerd-icons orderless treemacs
+	     vertico)))
 
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
