@@ -134,15 +134,33 @@
 ;; File tabs
 ;; ---------------------------------------------------------
 
-(global-tab-line-mode 1)
+(use-package centaur-tabs
+  :demand
+  :config
+  (centaur-tabs-mode t)
+  :bind
+  ("C-<tab>" . centaur-tabs-forward)
+  :hook
+  (treemacs-mode . centaur-tabs-local-mode))
 
-(setq tab-line-close-button-show t
-tab-line-new-button-show t
-tab-line-separator " ")
+(centaur-tabs-headline-match)
+(setq centaur-tabs-style "bar")
+(setq centaur-tabs-icon-type 'nerd-icons)
+(setq centaur-tabs-set-icons t)
+(setq centaur-tabs-set-modified-marker t)
 
-(setq tab-line-exclude-modes
-  '(treemacs-mode
-    special-mode))
+(defun my-centaur-tabs-buffer-groups ()
+  (list
+   (cond    ((derived-mode-p 'magit-mode) "Magit")
+    ((string-match-p "magit" (buffer-name)) "Magit")
+    ((derived-mode-p 'treemacs-mode) "Treemacs")
+    ((string-match-p "Treemacs" (buffer-name)) "Treemacs")
+    ((string-match-p "*Messages*" (buffer-name)) "Messages")
+    (t "General"))))
+
+(setq centaur-tabs-buffer-groups-function #'my-centaur-tabs-buffer-groups)
+
+(setq centaur-tabs-cycle-scope 'tabs)
 
 ;; ---------------------------------------------------------
 ;; Window layout history
@@ -285,7 +303,11 @@ mc/cmds-to-run-for-all)))
      default))
  '(minimap-dedicated-window nil)
  '(minimap-mode t)
- '(package-selected-packages nil))
+ '(package-selected-packages
+   '(centaur-tabs consult corfu doom-themes drag-stuff
+		  exec-path-from-shell magit marginalia
+		  multiple-cursors nerd-icons orderless treemacs
+		  vertico)))
 
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
