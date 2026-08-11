@@ -7,8 +7,18 @@
 ;; Basic GUI / editing behavior
 ;; ---------------------------------------------------------
 
-(when (daemonp)
-  (setq desktop-save t))
+;; Desktop session saving/restoration applies to BOTH the systemd daemon
+;; and standalone `emacs' launches (the rofi "Emacs" entry runs `emacs %F',
+;; a standalone process, not a daemon client).  Without this, standalone
+;; launches always start at *scratch*.
+(setq desktop-save t)
+;; The desktop lock file can be left behind holding a dead PID (on Linux
+;; the PGTK daemon can be torn down when the display connection drops,
+;; without running `kill-emacs-hook').  The default `ask' refuses to load
+;; in that case ("Desktop file in use; not loaded."), breaking session
+;; restore.  With `check-pid' we only skip the desktop if the owning Emacs
+;; process is actually still alive.
+(setq desktop-load-locked-desktop 'check-pid)
 
 (tool-bar-mode -1)
 
@@ -454,9 +464,43 @@ mc/cmds-to-run-for-all)))
 (define-key global-map [wheel-right] #'my-wheel-right)
 
 ;; ---------------------------------------------------------
-;; Correct session restoration
+;; Session restoration (daemon and standalone)
 ;; ---------------------------------------------------------
+(desktop-save-mode 1)
+(setq desktop-load-locked-desktop 'check-pid)
+(setq desktop-restore-frames t)
+(setq desktop-restore-reuses-frames t)
+(setq desktop-restore-in-current-display t)
+(setq desktop-auto-save-timeout 60)
+
+;; Make sure we always know where the desktop file lives, even before the
+;; first `desktop-read' runs.
+(setq desktop-dirname (file-name-as-directory user-emacs-directory))
+
+;; Never let autosave clobber the saved session with a frameset that
+;; describes no GUI frames.  (When the daemon sits idle with only its
+;; hidden terminal frame while no client is connected, a plain autosave
+;; would overwrite the session with an empty frameset.)  Only write the
+;; desktop when at least one real GUI frame is alive.
+(defun my-desktop-write-guard (fn &rest args)
+  (if (cl-some (lambda (f) (window-system f)) (frame-list))
+      (apply fn args)
+    (ignore args)))
+(advice-add 'desktop-auto-save :around #'my-desktop-write-guard)
+
+(defun my-desktop-read-on-startup ()
+  "Restore the session on standalone (non-daemon) launches."
+  (when (and (not (daemonp)) (display-graphic-p))
+    ;; A running daemon may still own the desktop lock; drop it so the
+    ;; restore is never refused ("Desktop file in use; not loaded.").
+    (condition-case nil
+        (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
+      (error nil))
+    (desktop-read)))
+(add-hook 'emacs-startup-hook #'my-desktop-read-on-startup)
+
 (when (daemonp)
+  ;; macOS: Cmd+Quit on a client should just delete its frame.
   (defun my-daemon-quit (&optional _event)
     (interactive)
     (if (daemonp)
@@ -466,43 +510,54 @@ mc/cmds-to-run-for-all)))
   (with-eval-after-load 'ns-win
     (define-key global-map [ns-power-off] #'my-daemon-quit))
 
-  (defvar my-daemon-saved-window-config nil)
-
-  (defun my-daemon-maybe-save-window-config (frame)
+  (defun my-daemon-save-on-last-frame (frame)
+    ;; Runs *before* FRAME is actually deleted (delete-frame-functions), so
+    ;; the session's window/frame layout can still be captured on a PGTK
+    ;; build where closing the last GUI frame may also take the daemon down
+    ;; with it.  `desktop-save' serializes the frameset (including the
+    ;; window tree) and buffer list, which is what the next launch or
+    ;; reconnect restores from.
     (when (cl-every (lambda (f) (not (and (window-system f)
                                           (frame-visible-p f))))
                     (delq frame (frame-list)))
-      (setq my-daemon-saved-window-config (current-window-configuration))))
+      (when (and (window-system frame) (frame-visible-p frame))
+        (condition-case err
+            (let ((desktop-save t)
+                  (desktop-load-locked-desktop 'check-pid))
+              (desktop-save desktop-dirname nil nil))
+          (error (message "my-daemon-save-on-last-frame failed: %S" err))))))
 
-  (defun my-daemon-maybe-restore-window-config ()
-    (when (and my-daemon-saved-window-config (frame-live-p (selected-frame)))
-      (let ((frame (selected-frame))
-            (config my-daemon-saved-window-config))
-        (setq my-daemon-saved-window-config nil)
-        (select-frame-set-input-focus frame)
-        (set-window-configuration config))))
+  (defvar my-daemon-reload-frame nil)
 
-  (defvar my-daemon-desktop-read-done nil)
+  (defun my-daemon-do-force-read-desktop ()
+    "Actually re-read the desktop (defeats the same-pid reload guard)."
+    (when (and (frame-live-p my-daemon-reload-frame)
+               (frame-parameter my-daemon-reload-frame 'client))
+      (with-selected-frame my-daemon-reload-frame
+        ;; `desktop-save-mode' already loaded the desktop at boot (into the
+        ;; hidden terminal frame), and `desktop-read' refuses to reload
+        ;; while this same pid still owns it ("Not reloading the desktop;
+        ;; already loaded").  Drop the lock file first, then re-read so the
+        ;; saved buffer list and window layout come back into FRAME.
+        (condition-case nil
+            (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
+          (error nil))
+        (desktop-read))
+      (setq my-daemon-reload-frame nil)))
 
-  (defun my-daemon-desktop-read-on-first-frame ()
-    (unless my-daemon-desktop-read-done
-      (setq my-daemon-desktop-read-done t)
-      (desktop-save-mode 1)
-      (setq desktop-restore-reuses-frames 'keep)
-      (let ((before (frame-list)))
-        (desktop-read)
-        (when (cl-some (lambda (f) (not (memq f before))) (frame-list))
-          (dolist (f before)
-            (when (and (frame-live-p f)
-                       (frame-parameter f 'client)
-                       (> (length (frame-list)) 1))
-              (delete-frame f t)))))
-      (when (and (fboundp 'treemacs) (fboundp 'treemacs-current-visibility))
-        (run-with-idle-timer 1 nil
-          (lambda ()
-            (when (frame-live-p (selected-frame))
-              (unless (eq (treemacs-current-visibility) 'visible)
-                (treemacs))))))))
+  (defun my-daemon-force-read-desktop (frame)
+    ;; A client frame is being created while the daemon had no visible GUI
+    ;; frames (the very first client after a daemon (re)start, or a client
+    ;; reconnecting after the last frame was closed).  Re-read the desktop
+    ;; into FRAME a moment later, once the frame is fully set up.
+    (when (and (frame-live-p frame)
+               (frame-parameter frame 'client)
+               (cl-every (lambda (f) (not (and (window-system f)
+                                               (frame-visible-p f)
+                                               (not (eq f frame)))))
+                         (frame-list)))
+      (setq my-daemon-reload-frame frame)
+      (run-with-idle-timer 1.0 nil #'my-daemon-do-force-read-desktop)))
 
   (defun my-daemon-mark-desktop-dont-save (frame)
     (when (and (frame-live-p frame) (not (window-system frame)))
@@ -512,6 +567,9 @@ mc/cmds-to-run-for-all)))
     (my-daemon-mark-desktop-dont-save f))
   (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
 
-  (add-hook 'delete-frame-functions #'my-daemon-maybe-save-window-config)
-  (add-hook 'server-after-make-frame-hook #'my-daemon-maybe-restore-window-config)
-  (add-hook 'server-after-make-frame-hook #'my-daemon-desktop-read-on-first-frame))
+  ;; Every transition from the hidden terminal frame to a client GUI frame
+  ;; (first client after daemon boot OR a reconnect after everything closed)
+  ;; re-reads the desktop into that frame.
+  (add-hook 'after-make-frame-functions #'my-daemon-force-read-desktop)
+  (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
+  (add-hook 'delete-frame-functions #'my-daemon-save-on-last-frame))
