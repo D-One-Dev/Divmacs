@@ -107,13 +107,38 @@
   :config
   (setq treemacs-is-never-other-window t
       treemacs-width-is-initially-locked nil
-      treemacs-width 35
-      treemacs-position 'left
-      )
-  :hook (emacs-startup . treemacs))
+      treemacs-width 20
+      treemacs-position 'left)
+  (require 'treemacs-mouse-interface)
+  (add-hook 'treemacs-post-buffer-init-hook
+          (lambda ()
+            (let ((win (treemacs-get-local-window)))
+              (when (and win (window-live-p win))
+                (set-window-scroll-bars win nil nil)))))
+  
+  (defun my-treemacs-ignore-meta-files-p (filename _path)
+    (string-suffix-p ".meta" filename))
 
-(setq treemacs-width-is-locked nil)
-(setq treemacs-width-is-initially-locked nil)
+  (add-to-list 'treemacs-ignored-file-predicates #'my-treemacs-ignore-meta-files-p)
+
+  (defun my-treemacs-toggle-meta-files ()
+  (interactive)
+    (if (memq #'my-treemacs-ignore-meta-files-p treemacs-ignored-file-predicates)
+      (setq treemacs-ignored-file-predicates
+            (delq #'my-treemacs-ignore-meta-files-p treemacs-ignored-file-predicates))
+    (add-to-list 'treemacs-ignored-file-predicates #'my-treemacs-ignore-meta-files-p))
+  (dolist (buf (buffer-list))
+    (when (with-current-buffer buf (derived-mode-p 'treemacs-mode))
+      (with-current-buffer buf
+        (treemacs--do-refresh (current-buffer) 'all))))
+  (message "Unity .meta files are now %s in treemacs."
+           (if (memq #'my-treemacs-ignore-meta-files-p treemacs-ignored-file-predicates)
+               "hidden" "visible")))
+  (add-hook 'treemacs-mode-hook
+          (lambda ()
+            (display-line-numbers-mode -1)))
+  
+  :hook (emacs-startup . treemacs))
 
 ;; ---------------------------------------------------------
 ;; Project support
@@ -136,6 +161,9 @@
 (set-face-attribute 'default nil
 :family "MartianMono Nerd Font"
 :height 140)
+
+(setq window-divider-default-right-width 4)  ; visible, grabbable divider bar
+(window-divider-mode 1)
 
 ;; ---------------------------------------------------------
 ;; File tabs
@@ -164,6 +192,8 @@
     ((string-match-p "Treemacs" (buffer-name)) "Treemacs")
     ((string-match-p "*Messages*" (buffer-name)) "Messages")
     ((string-match-p "*scratch*" (buffer-name)) "Scratch")
+    ((string-match-p "*Warnings*" (buffer-name)) "Warnigs")
+    ((string-match-p ".*eglot.*events.*" (buffer-name)) "Eglot")
     (t "General"))))
 
 (setq centaur-tabs-buffer-groups-function #'my-centaur-tabs-buffer-groups)
@@ -281,13 +311,13 @@ mc/cmds-to-run-for-all)))
 ;; ---------------------------------------------------------
 
 (use-package corfu
-:ensure t
-:custom
-(corfu-auto t)
-(corfu-auto-delay 0.1)
-(corfu-auto-prefix 1)
-:init
-(global-corfu-mode))
+  :ensure t
+  :custom
+  (corfu-auto t)
+  (corfu-auto-delay 0)
+  (corfu-auto-prefix 1)
+  :init
+  (global-corfu-mode))
 
 ;; ---------------------------------------------------------
 ;; C# / Unity editing
@@ -358,7 +388,8 @@ mc/cmds-to-run-for-all)))
 (use-package exec-path-from-shell
   :ensure t
   :config
-  (when (memq window-system '(mac ns x))))
+  (when (memq window-system '(mac ns))
+    (exec-path-from-shell-initialize)))
 
 ;; ---------------------------------------------------------
 ;; Moving lines/regions up/down with s-<up>/s-<down>
