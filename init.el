@@ -7,6 +7,9 @@
 ;; Basic GUI / editing behavior
 ;; ---------------------------------------------------------
 
+(desktop-save-mode 1)
+(setq desktop-save 'if-exists)
+
 (tool-bar-mode -1)
 
 (setq-default cursor-type 'bar)
@@ -106,7 +109,11 @@
       treemacs-width-is-initially-locked nil
       treemacs-width 35
       treemacs-position 'left
-      ))
+      )
+  :hook (emacs-startup . treemacs))
+
+(setq treemacs-width-is-locked nil)
+(setq treemacs-width-is-initially-locked nil)
 
 ;; ---------------------------------------------------------
 ;; Project support
@@ -156,6 +163,7 @@
     ((derived-mode-p 'treemacs-mode) "Treemacs")
     ((string-match-p "Treemacs" (buffer-name)) "Treemacs")
     ((string-match-p "*Messages*" (buffer-name)) "Messages")
+    ((string-match-p "*scratch*" (buffer-name)) "Scratch")
     (t "General"))))
 
 (setq centaur-tabs-buffer-groups-function #'my-centaur-tabs-buffer-groups)
