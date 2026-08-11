@@ -7,8 +7,8 @@
 ;; Basic GUI / editing behavior
 ;; ---------------------------------------------------------
 
-(desktop-save-mode 1)
-(setq desktop-save t)
+(when (daemonp)
+  (setq desktop-save t))
 
 (tool-bar-mode -1)
 
@@ -388,7 +388,12 @@ mc/cmds-to-run-for-all)))
 (use-package exec-path-from-shell
   :ensure t
   :config
-  (when (memq window-system '(mac ns))
+  (when (or (daemonp) (memq window-system '(mac ns x pgtk)))
+    (setq exec-path-from-shell-shell-name
+          (or (getenv "SHELL")
+              (executable-find "fish")
+              (executable-find "zsh")
+              shell-file-name))
     (exec-path-from-shell-initialize)))
 
 ;; ---------------------------------------------------------
@@ -447,3 +452,66 @@ mc/cmds-to-run-for-all)))
 
 (define-key global-map [wheel-left] #'my-wheel-left)
 (define-key global-map [wheel-right] #'my-wheel-right)
+
+;; ---------------------------------------------------------
+;; Correct session restoration
+;; ---------------------------------------------------------
+(when (daemonp)
+  (defun my-daemon-quit (&optional _event)
+    (interactive)
+    (if (daemonp)
+        (delete-frame)
+      (save-buffers-kill-emacs)))
+  (define-key global-map [ns-power-off] #'my-daemon-quit)
+  (with-eval-after-load 'ns-win
+    (define-key global-map [ns-power-off] #'my-daemon-quit))
+
+  (defvar my-daemon-saved-window-config nil)
+
+  (defun my-daemon-maybe-save-window-config (frame)
+    (when (cl-every (lambda (f) (not (and (window-system f)
+                                          (frame-visible-p f))))
+                    (delq frame (frame-list)))
+      (setq my-daemon-saved-window-config (current-window-configuration))))
+
+  (defun my-daemon-maybe-restore-window-config ()
+    (when (and my-daemon-saved-window-config (frame-live-p (selected-frame)))
+      (let ((frame (selected-frame))
+            (config my-daemon-saved-window-config))
+        (setq my-daemon-saved-window-config nil)
+        (select-frame-set-input-focus frame)
+        (set-window-configuration config))))
+
+  (defvar my-daemon-desktop-read-done nil)
+
+  (defun my-daemon-desktop-read-on-first-frame ()
+    (unless my-daemon-desktop-read-done
+      (setq my-daemon-desktop-read-done t)
+      (desktop-save-mode 1)
+      (setq desktop-restore-reuses-frames 'keep)
+      (let ((before (frame-list)))
+        (desktop-read)
+        (when (cl-some (lambda (f) (not (memq f before))) (frame-list))
+          (dolist (f before)
+            (when (and (frame-live-p f)
+                       (frame-parameter f 'client)
+                       (> (length (frame-list)) 1))
+              (delete-frame f t)))))
+      (when (and (fboundp 'treemacs) (fboundp 'treemacs-current-visibility))
+        (run-with-idle-timer 1 nil
+          (lambda ()
+            (when (frame-live-p (selected-frame))
+              (unless (eq (treemacs-current-visibility) 'visible)
+                (treemacs))))))))
+
+  (defun my-daemon-mark-desktop-dont-save (frame)
+    (when (and (frame-live-p frame) (not (window-system frame)))
+      (set-frame-parameter frame 'desktop-dont-save t)))
+
+  (dolist (f (frame-list))
+    (my-daemon-mark-desktop-dont-save f))
+  (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
+
+  (add-hook 'delete-frame-functions #'my-daemon-maybe-save-window-config)
+  (add-hook 'server-after-make-frame-hook #'my-daemon-maybe-restore-window-config)
+  (add-hook 'server-after-make-frame-hook #'my-daemon-desktop-read-on-first-frame))
