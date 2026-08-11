@@ -8,7 +8,7 @@
 ;; ---------------------------------------------------------
 
 (desktop-save-mode 1)
-(setq desktop-save 'if-exists)
+(setq desktop-save t)
 
 (tool-bar-mode -1)
 
