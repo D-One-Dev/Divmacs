@@ -245,7 +245,8 @@ mc/cmds-to-run-for-all)))
 (use-package eglot
   :ensure nil
   :bind (:map eglot-mode-map)
-  ("M-r" . eglot-rename))
+  ;; ("M-r" . eglot-rename))
+  ("C-r" . eglot-rename))
 
 (add-hook 'csharp-mode-hook #'eglot-ensure)
 
