@@ -542,7 +542,14 @@ mc/cmds-to-run-for-all)))
         (condition-case nil
             (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
           (error nil))
-        (desktop-read))
+        (desktop-read)
+        ;; Reconnect path: the `emacs-startup' treemacs hook only fires at
+        ;; daemon boot on the hidden terminal frame, so on a client that
+        ;; reconnects after the last frame was closed the file tree does not
+        ;; come back.  Re-open it once the desktop read has laid out the
+        ;; frame (treemacs is a side window, so it will not duplicate).
+        (when (require 'treemacs nil t)
+          (treemacs)))
       (setq my-daemon-reload-frame nil)))
 
   (defun my-daemon-force-read-desktop (frame)
