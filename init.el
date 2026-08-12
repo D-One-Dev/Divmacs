@@ -1,23 +1,15 @@
+;; -*- lexical-binding: t; -*-
+
 ;; =========================================================
 ;; Emacs configuration
-;; Linux / GUI-first / mouse-friendly setup
+;; Linux/MacOS / GUI-first / mouse-friendly setup
 ;; =========================================================
 
 ;; ---------------------------------------------------------
 ;; Basic GUI / editing behavior
 ;; ---------------------------------------------------------
 
-;; Desktop session saving/restoration applies to BOTH the systemd daemon
-;; and standalone `emacs' launches (the rofi "Emacs" entry runs `emacs %F',
-;; a standalone process, not a daemon client).  Without this, standalone
-;; launches always start at *scratch*.
 (setq desktop-save t)
-;; The desktop lock file can be left behind holding a dead PID (on Linux
-;; the PGTK daemon can be torn down when the display connection drops,
-;; without running `kill-emacs-hook').  The default `ask' refuses to load
-;; in that case ("Desktop file in use; not loaded."), breaking session
-;; restore.  With `check-pid' we only skip the desktop if the owning Emacs
-;; process is actually still alive.
 (setq desktop-load-locked-desktop 'check-pid)
 
 (tool-bar-mode -1)
@@ -59,7 +51,6 @@
 
 (when (eq system-type 'gnu/linux)
   ;;linux
-  ;;(setq x-super-keysym 'super))
   (setq x-super-keysym 'meta)
   (setq x-meta-keysym 'super))
 
@@ -75,7 +66,6 @@
 (global-set-key (kbd "s-r") #'query-replace)
 (global-set-key (kbd "s-z") #'undo)
 (global-set-key (kbd "s-s") #'save-buffer)
-;; (global-set-key (kbd "s-r") #'replace-string)
 
 ;; ---------------------------------------------------------
 ;; Mouse behavior
@@ -172,7 +162,7 @@
 :family "MartianMono Nerd Font"
 :height 140)
 
-(setq window-divider-default-right-width 4)  ; visible, grabbable divider bar
+(setq window-divider-default-right-width 4)
 (window-divider-mode 1)
 
 ;; ---------------------------------------------------------
@@ -205,6 +195,10 @@
     ((string-match-p "*scratch*" (buffer-name)) "Scratch")
     ((string-match-p "*Warnings*" (buffer-name)) "Warnigs")
     ((string-match-p ".*eglot.*events.*" (buffer-name)) "Eglot")
+    ((string-match-p "*lsp-log*" (buffer-name)) "LSP")
+    ((string-match-p "*csharp-ls::stderr*" (buffer-name)) "LSP")
+    ((string-match-p "*csharp-ls*" (buffer-name)) "LSP")
+    ((string-match-p "*xref*" (buffer-name)) "LSP")
     (t "General"))))
 
 (setq centaur-tabs-buffer-groups-function #'my-centaur-tabs-buffer-groups)
@@ -254,18 +248,13 @@
 ;; ---------------------------------------------------------
 
 (defun my-mc-middle-drag-start (event)
-"Start selecting lines with the middle mouse button."
 (interactive "e")
 (mouse-drag-region event))
 
 (defun my-mc-middle-drag-end (event)
-"Finish selection and schedule multiple cursors."
 (interactive "e")
 (mouse-set-region event)
 
-;; Run mc/edit-lines after this command has completely
-;; finished, so multiple-cursors doesn't mistake the
-;; mouse command itself for an MC editing command.
 (when (use-region-p)
 (run-at-time
 0 nil
@@ -289,7 +278,6 @@ mc/cmds-to-run-for-all)))
 ;; ---------------------------------------------------------
 
 (defun my-mouse-drag-region (event)
-"Cancel multiple cursors, then perform normal mouse selection."
 (interactive "e")
 
 (when (bound-and-true-p multiple-cursors-mode)
@@ -303,19 +291,48 @@ mc/cmds-to-run-for-all)))
 ;; C# / Unity language server
 ;; ---------------------------------------------------------
 
-(require 'eglot)
+(use-package lsp-mode
+  :init
+  (setq lsp-keymap-prefix "C-c l")
+  (setq lsp-csharp-server 'roslyn)
+  (setq lsp-semantic-tokens-enable t)
 
-(add-to-list
- 'eglot-server-programs
- '(csharp-mode . ("csharp-ls")))
+  :hook
+  ((csharp-mode . lsp)
+   (lsp-mode . lsp-enable-which-key-integration))
 
-(use-package eglot
-  :ensure nil
-  :bind (:map eglot-mode-map)
-  ;; ("M-r" . eglot-rename))
-  ("C-r" . eglot-rename))
+  :commands lsp
 
-(add-hook 'csharp-mode-hook #'eglot-ensure)
+  :config
+  (defun my-lsp-lens-click-find-references (orig-fn command? &rest args)
+    (let* ((cmd (lsp:command-command command?))
+           (cmd-args (lsp:command-arguments? command?)))
+      (if (and (string-equal cmd "textDocument/references")
+               (>= (length cmd-args) 1))
+          (lambda ()
+            (interactive)
+            (let ((params (aref cmd-args 0)))
+              (lsp-show-xrefs
+               (lsp--locations-to-xref-items
+                (lsp-request "textDocument/references" params))
+               nil t)))
+        (apply orig-fn command? args))))
+
+  (advice-add 'lsp-lens--create-interactive-command
+              :around
+              #'my-lsp-lens-click-find-references))
+
+(use-package lsp-ui :commands lsp-ui-mode)
+(use-package lsp-treemacs :commands lsp-treemacs-errors-list)
+(use-package dap-mode)
+
+(use-package which-key
+    :config
+    (which-key-mode))
+
+(add-to-list 'load-path (expand-file-name "lib/lsp-mode" user-emacs-directory))
+(add-to-list 'load-path (expand-file-name "lib/lsp-mode/clients" user-emacs-directory))
+
 
 ;; ---------------------------------------------------------
 ;; C# completion popup
@@ -335,7 +352,30 @@ mc/cmds-to-run-for-all)))
 ;; ---------------------------------------------------------
 
 (electric-pair-mode 1)
-(add-hook 'csharp-mode-hook (lambda () (setq c-basic-offset 4)))
+
+(defun my-electric-pair-inhibit (char)
+  (and (not (eobp))
+       (not (memq (char-after) '(?\s ?\t ?\n ?\r)))))
+
+(setq-default electric-pair-inhibit-predicate
+              #'my-electric-pair-inhibit)
+
+(add-hook 'csharp-mode-hook
+          (lambda ()
+            (setq c-basic-offset 4)
+            (setq c-auto-newline t)
+            (c-set-offset 'defun-open 0)
+            (c-set-offset 'block-open 0)
+            (c-set-offset 'inline-open 0)
+            (c-set-offset 'substatement-open 0)
+            (setq c-hanging-braces-alist
+                  '((defun-open before after)
+                    (defun-close before)
+                    (block-open before after)
+                    (block-close before)
+                    (inline-open before after)
+                    (substatement-open before after)
+                    (statement-case-open before after)))))
 
 ;; ---------------------------------------------------------
 ;; Custom variables
@@ -353,10 +393,10 @@ mc/cmds-to-run-for-all)))
  '(minimap-dedicated-window nil)
  '(minimap-mode t)
  '(package-selected-packages
-   '(centaur-tabs consult corfu doom-themes drag-stuff
-		  exec-path-from-shell magit marginalia
-		  multiple-cursors nerd-icons orderless treemacs
-		  vertico)))
+   '(centaur-tabs consult corfu dap-mode doom-themes drag-stuff
+		  exec-path-from-shell lsp-mode lsp-treemacs lsp-ui
+		  magit marginalia multiple-cursors nerd-icons
+		  orderless treemacs vertico)))
 
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
@@ -474,15 +514,8 @@ mc/cmds-to-run-for-all)))
 (setq desktop-restore-in-current-display t)
 (setq desktop-auto-save-timeout 60)
 
-;; Make sure we always know where the desktop file lives, even before the
-;; first `desktop-read' runs.
 (setq desktop-dirname (file-name-as-directory user-emacs-directory))
 
-;; Never let autosave clobber the saved session with a frameset that
-;; describes no GUI frames.  (When the daemon sits idle with only its
-;; hidden terminal frame while no client is connected, a plain autosave
-;; would overwrite the session with an empty frameset.)  Only write the
-;; desktop when at least one real GUI frame is alive.
 (defun my-desktop-write-guard (fn &rest args)
   (if (cl-some (lambda (f) (window-system f)) (frame-list))
       (apply fn args)
@@ -492,8 +525,6 @@ mc/cmds-to-run-for-all)))
 (defun my-desktop-read-on-startup ()
   "Restore the session on standalone (non-daemon) launches."
   (when (and (not (daemonp)) (display-graphic-p))
-    ;; A running daemon may still own the desktop lock; drop it so the
-    ;; restore is never refused ("Desktop file in use; not loaded.").
     (condition-case nil
         (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
       (error nil))
@@ -501,7 +532,6 @@ mc/cmds-to-run-for-all)))
 (add-hook 'emacs-startup-hook #'my-desktop-read-on-startup)
 
 (when (daemonp)
-  ;; macOS: Cmd+Quit on a client should just delete its frame.
   (defun my-daemon-quit (&optional _event)
     (interactive)
     (if (daemonp)
@@ -512,12 +542,6 @@ mc/cmds-to-run-for-all)))
     (define-key global-map [ns-power-off] #'my-daemon-quit))
 
   (defun my-daemon-save-on-last-frame (frame)
-    ;; Runs *before* FRAME is actually deleted (delete-frame-functions), so
-    ;; the session's window/frame layout can still be captured on a PGTK
-    ;; build where closing the last GUI frame may also take the daemon down
-    ;; with it.  `desktop-save' serializes the frameset (including the
-    ;; window tree) and buffer list, which is what the next launch or
-    ;; reconnect restores from.
     (when (cl-every (lambda (f) (not (and (window-system f)
                                           (frame-visible-p f))))
                     (delq frame (frame-list)))
@@ -535,29 +559,15 @@ mc/cmds-to-run-for-all)))
     (when (and (frame-live-p my-daemon-reload-frame)
                (frame-parameter my-daemon-reload-frame 'client))
       (with-selected-frame my-daemon-reload-frame
-        ;; `desktop-save-mode' already loaded the desktop at boot (into the
-        ;; hidden terminal frame), and `desktop-read' refuses to reload
-        ;; while this same pid still owns it ("Not reloading the desktop;
-        ;; already loaded").  Drop the lock file first, then re-read so the
-        ;; saved buffer list and window layout come back into FRAME.
         (condition-case nil
             (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
           (error nil))
         (desktop-read)
-        ;; Reconnect path: the `emacs-startup' treemacs hook only fires at
-        ;; daemon boot on the hidden terminal frame, so on a client that
-        ;; reconnects after the last frame was closed the file tree does not
-        ;; come back.  Re-open it once the desktop read has laid out the
-        ;; frame (treemacs is a side window, so it will not duplicate).
         (when (require 'treemacs nil t)
           (treemacs)))
       (setq my-daemon-reload-frame nil)))
 
   (defun my-daemon-force-read-desktop (frame)
-    ;; A client frame is being created while the daemon had no visible GUI
-    ;; frames (the very first client after a daemon (re)start, or a client
-    ;; reconnecting after the last frame was closed).  Re-read the desktop
-    ;; into FRAME a moment later, once the frame is fully set up.
     (when (and (frame-live-p frame)
                (frame-parameter frame 'client)
                (cl-every (lambda (f) (not (and (window-system f)
@@ -574,10 +584,7 @@ mc/cmds-to-run-for-all)))
   (dolist (f (frame-list))
     (my-daemon-mark-desktop-dont-save f))
   (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
-
-  ;; Every transition from the hidden terminal frame to a client GUI frame
-  ;; (first client after daemon boot OR a reconnect after everything closed)
-  ;; re-reads the desktop into that frame.
+  
   (add-hook 'after-make-frame-functions #'my-daemon-force-read-desktop)
   (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
   (add-hook 'delete-frame-functions #'my-daemon-save-on-last-frame))
