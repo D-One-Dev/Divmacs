@@ -185,6 +185,7 @@
   (centaur-tabs-mode t)
   :bind
   ("C-<tab>" . centaur-tabs-forward)
+  ("s-w" . kill-current-buffer)
   :hook
   (treemacs-mode . centaur-tabs-local-mode))
 
