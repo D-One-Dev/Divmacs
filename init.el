@@ -9,8 +9,13 @@
 ;; Basic GUI / editing behavior
 ;; ---------------------------------------------------------
 
-(setq desktop-save t)
-(setq desktop-load-locked-desktop 'check-pid)
+(desktop-save-mode 1)
+(setq desktop-restore-eager 5)
+(setq desktop-restore-freames nil)
+(savehist-mode 1)
+(add-to-list 'savehist-additional-variables 'kill-ring)
+
+(setq desktop-load-locked-desktop t)
 
 (tool-bar-mode -1)
 
@@ -115,7 +120,7 @@
             (let ((win (treemacs-get-local-window)))
               (when (and win (window-live-p win))
                 (set-window-scroll-bars win nil nil)))))
-  
+
   (defun my-treemacs-ignore-meta-files-p (filename _path)
     (string-suffix-p ".meta" filename))
 
@@ -137,7 +142,7 @@
   (add-hook 'treemacs-mode-hook
           (lambda ()
             (display-line-numbers-mode -1)))
-  
+
   :hook (emacs-startup . treemacs))
 
 ;; ---------------------------------------------------------
@@ -191,13 +196,16 @@
     ((string-match-p "magit" (buffer-name)) "Magit")
     ((derived-mode-p 'treemacs-mode) "Treemacs")
     ((string-match-p "Treemacs" (buffer-name)) "Treemacs")
+    ((derived-mode-p 'csharp-mode) "C#")
+    ((derived-mode-p 'shader-mode) "Shader")
+    ((derived-mode-p 'yaml-mode) "YAML")
+    ((string-match-p "\\*unity" (buffer-name)) "Unity")
+    ((string-match-p "\\*dap\\|\\*Debug" (buffer-name)) "Debug")
     ((string-match-p "*Messages*" (buffer-name)) "Messages")
     ((string-match-p "*scratch*" (buffer-name)) "Scratch")
-    ((string-match-p "*Warnings*" (buffer-name)) "Warnigs")
+    ((string-match-p "*Warnings*" (buffer-name)) "Warnings")
     ((string-match-p ".*eglot.*events.*" (buffer-name)) "Eglot")
-    ((string-match-p "*lsp-log*" (buffer-name)) "LSP")
-    ((string-match-p "*csharp-ls::stderr*" (buffer-name)) "LSP")
-    ((string-match-p "*csharp-ls*" (buffer-name)) "LSP")
+    ((string-match-p "*lsp-log*\\|*csharp-ls\\|*LSP" (buffer-name)) "LSP")
     ((string-match-p "*xref*" (buffer-name)) "LSP")
     (t "General"))))
 
@@ -288,68 +296,15 @@ mc/cmds-to-run-for-all)))
 (global-set-key [down-mouse-1] #'my-mouse-drag-region)
 
 ;; ---------------------------------------------------------
-;; C# / Unity language server
+;; C# / Unity — Roslyn LSP (csharp-ls) and IDE integration
 ;; ---------------------------------------------------------
-
-(use-package lsp-mode
-  :init
-  (setq lsp-keymap-prefix "C-c l")
-  (setq lsp-csharp-server 'roslyn)
-  (setq lsp-semantic-tokens-enable t)
-
-  :hook
-  ((csharp-mode . lsp)
-   (lsp-mode . lsp-enable-which-key-integration))
-
-  :commands lsp
-
-  :config
-  (defun my-lsp-lens-click-find-references (orig-fn command? &rest args)
-    (let* ((cmd (lsp:command-command command?))
-           (cmd-args (lsp:command-arguments? command?)))
-      (if (and (string-equal cmd "textDocument/references")
-               (>= (length cmd-args) 1))
-          (lambda ()
-            (interactive)
-            (let ((params (aref cmd-args 0)))
-              (lsp-show-xrefs
-               (lsp--locations-to-xref-items
-                (lsp-request "textDocument/references" params))
-               nil t)))
-        (apply orig-fn command? args))))
-
-  (advice-add 'lsp-lens--create-interactive-command
-              :around
-              #'my-lsp-lens-click-find-references))
-
-(use-package lsp-ui :commands lsp-ui-mode)
-(use-package lsp-treemacs :commands lsp-treemacs-errors-list)
-(use-package dap-mode)
-
-(use-package which-key
-    :config
-    (which-key-mode))
-
-(add-to-list 'load-path (expand-file-name "lib/lsp-mode" user-emacs-directory))
-(add-to-list 'load-path (expand-file-name "lib/lsp-mode/clients" user-emacs-directory))
-
-
-;; ---------------------------------------------------------
-;; C# completion popup
-;; ---------------------------------------------------------
-
-(use-package corfu
-  :ensure t
-  :custom
-  (corfu-auto t)
-  (corfu-auto-delay 0)
-  (corfu-auto-prefix 1)
-  :init
-  (global-corfu-mode))
-
-;; ---------------------------------------------------------
-;; C# / Unity editing
-;; ---------------------------------------------------------
+;;
+;; csharp-ls is the Microsoft-Roslyn-based C# language server
+;; (https://github.com/razzmatazz/csharp-language-server),
+;; installed as a global .NET tool:
+;;     dotnet tool install --global csharp-ls
+;; It works on both Linux and macOS (dotnet tools install to
+;; ~/.dotnet/tools, which exec-path-from-shell adds to PATH).
 
 (electric-pair-mode 1)
 
@@ -360,22 +315,272 @@ mc/cmds-to-run-for-all)))
 (setq-default electric-pair-inhibit-predicate
               #'my-electric-pair-inhibit)
 
-(add-hook 'csharp-mode-hook
-          (lambda ()
-            (setq c-basic-offset 4)
-            (setq c-auto-newline t)
-            (c-set-offset 'defun-open 0)
-            (c-set-offset 'block-open 0)
-            (c-set-offset 'inline-open 0)
-            (c-set-offset 'substatement-open 0)
-            (setq c-hanging-braces-alist
-                  '((defun-open before after)
-                    (defun-close before)
-                    (block-open before after)
-                    (block-close before)
-                    (inline-open before after)
-                    (substatement-open before after)
-                    (statement-case-open before after)))))
+;; --- LSP core (lsp-mode) ----------------------------------
+
+(use-package lsp-mode
+  :ensure t
+  :commands (lsp lsp-deferred lsp-install-server)
+  :custom
+  (lsp-keymap-prefix "C-c l")
+  (lsp-enable-snippet t)
+  (lsp-headerline-breadcrumb-enable t)
+  (lsp-idle-delay 0.5)
+  (lsp-keep-workspace-alive t)
+  (lsp-completion-provider :capf)
+  (lsp-auto-guess-root t)
+  (lsp-guess-root-without-session t))
+
+(use-package lsp-ui
+  :ensure t
+  :hook (lsp-mode . lsp-ui-mode)
+  :custom
+  (lsp-ui-doc-enable t)
+  (lsp-ui-doc-position 'at-point)
+  (lsp-ui-doc-delay 0.25)
+  (lsp-ui-doc-use-childframe (display-graphic-p))
+  (lsp-ui-doc-header t)
+  (lsp-ui-sideline-enable t)
+  (lsp-ui-sideline-show-diagnostics t)
+  (lsp-ui-sideline-show-hover nil)
+  (lsp-ui-sideline-ignore-duplicate t))
+
+(use-package lsp-treemacs
+  :ensure t
+  :after (lsp-mode treemacs)
+  :config
+  (define-key lsp-command-map (kbd "gs") #'lsp-treemacs-symbols)
+  (lsp-treemacs-sync-mode 1))
+
+;; --- Completion (company + LSP capf) ----------------------
+
+(use-package company
+  :ensure t
+  :hook ((csharp-mode shader-mode) . company-mode)
+  :custom
+  (company-idle-delay 0.2)
+  (company-minimum-prefix-length 1)
+  (company-tooltip-limit 12)
+  (company-tooltip-align-annotations t)
+  :config
+  (setq company-backends '(company-capf))
+  (setq completion-ignore-case t)
+  (define-key company-active-map (kbd "TAB") #'company-complete-selection)
+  (define-key company-active-map (kbd "<tab>") #'company-complete-selection))
+
+(use-package yasnippet
+  :ensure t
+  :hook (csharp-mode . yas-minor-mode)
+  :config
+  (yas-reload-all))
+
+;; --- Unity helpers (cross-platform) ------------------------
+
+(defcustom my/unity-editor-version nil
+  "Unity editor version to use (e.g. \"6000.4.10f1\").
+When nil, the newest editor installed via Unity Hub is used."
+  :type '(choice (string :tag "Version")
+                 (const :tag "Newest installed" nil)))
+
+(defun my/unity-hub-editors-directory ()
+  "Return the Unity Hub editors directory for this OS, or nil."
+  (cond ((eq system-type 'darwin)
+         "/Applications/Unity/Hub/Editor")
+        ((eq system-type 'gnu/linux)
+         (expand-file-name "Unity/Hub/Editor"
+                           (or (getenv "HOME") "~")))
+        (t nil)))
+
+(defun my/unity-editor-path ()
+  "Return the Unity editor executable path, or nil.
+Honours the UNITY_EDITOR environment variable first."
+  (or (getenv "UNITY_EDITOR")
+      (let* ((dir (my/unity-hub-editors-directory))
+             (versions (and dir (directory-files dir t "^[0-9]")))
+             (chosen (cond (my/unity-editor-version my/unity-editor-version)
+                           (versions (car (sort versions #'string>)))))
+             (base (and dir chosen (expand-file-name chosen dir))))
+        (and base (file-directory-p base)
+             (if (eq system-type 'darwin)
+                 (expand-file-name "Unity.app/Contents/MacOS/Unity" base)
+               (expand-file-name "Editor/Unity" base))))))
+
+(defun my/unity-project-root (&optional file)
+  "Return the Unity project root for FILE (default: current buffer), or nil.
+A Unity project is recognized by its Assets/ or ProjectSettings/ folder."
+  (let ((dir (file-name-directory
+              (or (buffer-file-name) file default-directory))))
+    (when dir
+      (or (locate-dominating-file dir "Assets")
+          (locate-dominating-file dir "ProjectSettings")))))
+
+(defun my/unity-solution-file (root)
+  "Return the Unity .sln file at the top level of ROOT, or nil."
+  (seq-find (lambda (f)
+              (and (string-suffix-p ".sln" f)
+                   (not (file-directory-p f))))
+            (directory-files root t)))
+
+(defun my/unity-project-try (dir)
+  "Tell project.el that a directory with Assets/ is a Unity project."
+  (when-let* ((root (or (locate-dominating-file dir "Assets")
+                        (locate-dominating-file dir "ProjectSettings"))))
+    (cons 'transient root)))
+
+(add-to-list 'project-find-functions #'my/unity-project-try)
+
+(defun my/unity-open-in-editor ()
+  "Open the current Unity project in the Unity editor."
+  (interactive)
+  (let* ((root (my/unity-project-root))
+         (editor (my/unity-editor-path)))
+    (unless root (user-error "Not inside a Unity project"))
+    (unless editor
+      (user-error "Unity editor not found (set UNITY_EDITOR or install one via Unity Hub)"))
+    (start-process "unity-editor" nil editor "-projectPath" root)
+    (message "Opening %s in Unity editor..." root)))
+
+(defun my/unity-regenerate-project-files ()
+  "Regenerate Unity .sln/.csproj files in batch mode."
+  (interactive)
+  (let* ((root (my/unity-project-root))
+         (editor (my/unity-editor-path)))
+    (unless root (user-error "Not inside a Unity project"))
+    (unless editor
+      (user-error "Unity editor not found (set UNITY_EDITOR or install one via Unity Hub)"))
+    (let ((buf (get-buffer-create "*unity-regenerate*")))
+      (with-current-buffer buf (erase-buffer))
+      (display-buffer buf)
+      (message "Regenerating project files for %s..." root)
+      (start-process "unity-regenerate" buf editor
+                     "-quit" "-batchmode" "-projectPath" root
+                     "-executeMethod" "UnityEditor.SyncVS.SyncSolution"))))
+
+(defun my/unity-new-mono-behaviour (name)
+  "Create a Unity MonoBehaviour script NAME in the current Assets folder."
+  (interactive "sScript name: ")
+  (let* ((root (my/unity-project-root))
+         (assets (and root (expand-file-name "Assets" root)))
+         (dir (or (and buffer-file-name (file-name-directory buffer-file-name))
+                  default-directory)))
+    (unless root (user-error "Not inside a Unity project"))
+    (unless (and assets (file-in-directory-p dir assets))
+      (setq dir assets))
+    (let ((file (expand-file-name (concat name ".cs") dir)))
+      (when (file-exists-p file) (user-error "%s already exists" file))
+      (with-temp-file file
+        (insert
+         (format "using System.Collections;\nusing System.Collections.Generic;\nusing UnityEngine;\n\npublic class %s : MonoBehaviour\n{\n    // Start is called before the first frame update\n    void Start()\n    {\n    }\n\n    // Update is called once per frame\n    void Update()\n    {\n    }\n}\n" name)))
+      (find-file file))))
+
+(defun my/unity-open-meta-file ()
+  "Open the .meta file accompanying the current buffer's file."
+  (interactive)
+  (let ((meta (and buffer-file-name (concat buffer-file-name ".meta"))))
+    (if (and meta (file-exists-p meta))
+        (find-file meta)
+      (user-error "No .meta file here"))))
+
+(defun my/unity-dap-debug ()
+  "Start a Unity debugging session (loads dap-mode if needed).
+Run `dap-unity-setup' once beforehand to download Unity's debug adapter."
+  (interactive)
+  (require 'dap-mode)
+  (require 'dap-unity nil t)
+  (dap-debug))
+
+(defvar my/unity-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "u" #'my/unity-open-in-editor)
+    (define-key map "p" #'my/unity-regenerate-project-files)
+    (define-key map "n" #'my/unity-new-mono-behaviour)
+    (define-key map "m" #'my/unity-open-meta-file)
+    (define-key map "d" #'my/unity-dap-debug)
+    map)
+  "Keymap for Unity commands, bound to C-c u.")
+
+(global-set-key (kbd "C-c u") my/unity-map)
+
+;; --- Unity .meta file handling (unity.el) ------------------
+;; From https://github.com/elizagamedev/unity.el -- makes
+;; rename-file/delete-file keep .meta files in sync. Unity's
+;; \"External Script Editor\" should be set to:
+;;   emacsclient -n +$(Line):$(Column) $(File)
+
+(use-package unity
+  :vc (:url "https://github.com/elizagamedev/unity.el" :rev :newest)
+  :demand t
+  :config
+  (unity-mode 1))
+
+;; --- C# editing / Roslyn LSP activation -------------------
+
+(defun my/csharp-mode-setup ()
+  "Set up a C# buffer for Unity development with Roslyn (csharp-ls)."
+  (setq c-basic-offset 4)
+  (setq c-auto-newline t)
+  (c-set-offset 'defun-open 0)
+  (c-set-offset 'block-open 0)
+  (c-set-offset 'inline-open 0)
+  (c-set-offset 'substatement-open 0)
+  (setq c-hanging-braces-alist
+        '((defun-open before after)
+          (defun-close before)
+          (block-open before after)
+          (block-close before)
+          (inline-open before after)
+          (substatement-open before after)
+          (statement-case-open before after)))
+  (when-let* ((root (my/unity-project-root)))
+    (require 'lsp-csharp nil t)
+    (if-let* ((sln (my/unity-solution-file root)))
+        (setq-local lsp-csharp-solution-file sln)
+      (message "Unity project found but no .sln yet -- run C-c u p to regenerate project files.")))
+  (add-hook 'before-save-hook #'lsp-format-buffer nil t)
+  (lsp-deferred))
+
+(use-package csharp-mode
+  :ensure t
+  :defer t
+  :mode ("\\.cs\\'" . csharp-mode)
+  :hook (csharp-mode . my/csharp-mode-setup))
+
+;; --- ShaderLab support -------------------------------------
+
+(use-package shader-mode
+  :ensure t
+  :defer t
+  :mode ("\\.shader\\'" . shader-mode))
+
+;; --- Unity YAML assets (.unity/.prefab/.asset) -------------
+
+(use-package yaml-mode
+  :ensure t
+  :defer t
+  :mode ("\\.\\(yml\\|yaml\\|unity\\|prefab\\|asset\\)\\'" . yaml-mode))
+
+;; --- Debugging (DAP + Unity debug adapter) -----------------
+;; M-x dap-debug -> pick the \"Unity Editor\" template.
+;; Run M-x dap-unity-setup first to download Unity's debug adapter.
+
+(use-package dap-mode
+  :ensure t
+  :after lsp-mode
+  :config
+  (dap-mode 1)
+  (dap-ui-mode 1)
+  (dap-ui-controls-mode 1))
+
+;; --- Treemacs: hide Unity transient/build directories ------
+
+(defun my/treemacs-ignore-unity-transients-p (filename path)
+  "Hide Unity transient/build directories in treemacs."
+  (and (file-directory-p path)
+       (string-match-p "\\`\\(Library\\|Temp\\|Logs\\|obj\\|Build\\|Builds\\)\\'"
+                       filename)))
+
+(with-eval-after-load 'treemacs
+  (add-to-list 'treemacs-ignored-file-predicates
+               #'my/treemacs-ignore-unity-transients-p))
 
 ;; ---------------------------------------------------------
 ;; Custom variables
@@ -393,10 +598,11 @@ mc/cmds-to-run-for-all)))
  '(minimap-dedicated-window nil)
  '(minimap-mode t)
  '(package-selected-packages
-   '(centaur-tabs consult corfu dap-mode doom-themes drag-stuff
-		  exec-path-from-shell lsp-mode lsp-treemacs lsp-ui
-		  magit marginalia multiple-cursors nerd-icons
-		  orderless treemacs vertico)))
+   '(centaur-tabs company consult csharp-mode dap-mode dap-unity
+		  doom-themes drag-stuff exec-path-from-shell
+		  lsp-mode lsp-treemacs lsp-ui magit marginalia
+		  multiple-cursors nerd-icons orderless shader-mode
+		  treemacs unity vertico yaml-mode yasnippet)))
 
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
@@ -503,88 +709,3 @@ mc/cmds-to-run-for-all)))
 
 (define-key global-map [wheel-left] #'my-wheel-left)
 (define-key global-map [wheel-right] #'my-wheel-right)
-
-;; ---------------------------------------------------------
-;; Session restoration (daemon and standalone)
-;; ---------------------------------------------------------
-(desktop-save-mode 1)
-(setq desktop-load-locked-desktop 'check-pid)
-(setq desktop-restore-frames t)
-(setq desktop-restore-reuses-frames t)
-(setq desktop-restore-in-current-display t)
-(setq desktop-auto-save-timeout 60)
-
-(setq desktop-dirname (file-name-as-directory user-emacs-directory))
-
-(defun my-desktop-write-guard (fn &rest args)
-  (if (cl-some (lambda (f) (window-system f)) (frame-list))
-      (apply fn args)
-    (ignore args)))
-(advice-add 'desktop-auto-save :around #'my-desktop-write-guard)
-
-(defun my-desktop-read-on-startup ()
-  "Restore the session on standalone (non-daemon) launches."
-  (when (and (not (daemonp)) (display-graphic-p))
-    (condition-case nil
-        (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
-      (error nil))
-    (desktop-read)))
-(add-hook 'emacs-startup-hook #'my-desktop-read-on-startup)
-
-(when (daemonp)
-  (defun my-daemon-quit (&optional _event)
-    (interactive)
-    (if (daemonp)
-        (delete-frame)
-      (save-buffers-kill-emacs)))
-  (define-key global-map [ns-power-off] #'my-daemon-quit)
-  (with-eval-after-load 'ns-win
-    (define-key global-map [ns-power-off] #'my-daemon-quit))
-
-  (defun my-daemon-save-on-last-frame (frame)
-    (when (cl-every (lambda (f) (not (and (window-system f)
-                                          (frame-visible-p f))))
-                    (delq frame (frame-list)))
-      (when (and (window-system frame) (frame-visible-p frame))
-        (condition-case err
-            (let ((desktop-save t)
-                  (desktop-load-locked-desktop 'check-pid))
-              (desktop-save desktop-dirname nil nil))
-          (error (message "my-daemon-save-on-last-frame failed: %S" err))))))
-
-  (defvar my-daemon-reload-frame nil)
-
-  (defun my-daemon-do-force-read-desktop ()
-    "Actually re-read the desktop (defeats the same-pid reload guard)."
-    (when (and (frame-live-p my-daemon-reload-frame)
-               (frame-parameter my-daemon-reload-frame 'client))
-      (with-selected-frame my-daemon-reload-frame
-        (condition-case nil
-            (delete-file (concat desktop-dirname desktop-base-file-name ".lock"))
-          (error nil))
-        (desktop-read)
-        (when (require 'treemacs nil t)
-          (treemacs)))
-      (setq my-daemon-reload-frame nil)))
-
-  (defun my-daemon-force-read-desktop (frame)
-    (when (and (frame-live-p frame)
-               (frame-parameter frame 'client)
-               (cl-every (lambda (f) (not (and (window-system f)
-                                               (frame-visible-p f)
-                                               (not (eq f frame)))))
-                         (frame-list)))
-      (setq my-daemon-reload-frame frame)
-      (run-with-idle-timer 1.0 nil #'my-daemon-do-force-read-desktop)))
-
-  (defun my-daemon-mark-desktop-dont-save (frame)
-    (when (and (frame-live-p frame) (not (window-system frame)))
-      (set-frame-parameter frame 'desktop-dont-save t)))
-
-  (dolist (f (frame-list))
-    (my-daemon-mark-desktop-dont-save f))
-  (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
-  
-  (add-hook 'after-make-frame-functions #'my-daemon-force-read-desktop)
-  (add-hook 'after-make-frame-functions #'my-daemon-mark-desktop-dont-save)
-  (add-hook 'delete-frame-functions #'my-daemon-save-on-last-frame))
